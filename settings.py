@@ -1,0 +1,14 @@
+## Database configuration
+DB_URI = 'sqlite:///detwtr.db'
+
+## STREAM OAUTH
+STREAM_APP_KEY = ''
+STREAM_APP_SECRET = ''
+STREAM_OAUTH_TOKEN = ''
+STREAM_OAUTH_TOKEN_SECRET = ''
+
+## BOT OAUTH
+BOT_APP_KEY = ''
+BOT_APP_SECRET = ''
+BOT_OAUTH_TOKEN = ''
+BOT_OAUTH_TOKEN_SECRET = ''
