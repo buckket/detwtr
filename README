@@ -1,0 +1,14 @@
+detwtr
+~~~~~~
+
+Stores tweets locally and shares them with the world, in case they get deleted or withheld.
+
+Features:
+- Simple duplicate detection via Levenshtein distance
+- Also works for tweets with media content (pictures, at least)
+- Also works for quoted tweets, RTs are ignored though
+
+If you’re affected by this: information is here to stay.
+
+License:
+GPLv3+
