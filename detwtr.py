@@ -1,92 +1,114 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
-
-from twython import Twython
-from twython import TwythonStreamer
-from twython import TwythonError
-
-from StringIO import StringIO
+import html
+import logging
 
 import requests
-import HTMLParser
+from peewee import DoesNotExist
+from twython import TwythonStreamer
 
 import settings
-import database
-from database import Tweet
+from database import db, Tweet, User, Event, Job
 
 
 def init_detwtr_stream():
     return detwtrStreamer(settings.STREAM_APP_KEY,
-        settings.STREAM_APP_SECRET,
-        settings.STREAM_OAUTH_TOKEN,
-        settings.STREAM_OAUTH_TOKEN_SECRET)
-
-def init_detwtr_bot():
-    return Twython(settings.BOT_APP_KEY,
-        settings.BOT_APP_SECRET,
-        settings.BOT_OAUTH_TOKEN,
-        settings.BOT_OAUTH_TOKEN_SECRET)
+                          settings.STREAM_APP_SECRET,
+                          settings.STREAM_OAUTH_TOKEN,
+                          settings.STREAM_OAUTH_TOKEN_SECRET)
 
 
 class detwtrStreamer(TwythonStreamer):
-
     def on_success(self, data):
-        if 'text' in data:
-            text = data['text']
-            tweet_id = data['id_str']
-            user_id = data['user']['id_str']
-            media = None
+        if "text" in data:
+            payload = {}
 
-            # checking if tweet has a picture attached
-            if 'media' in data['entities']:
-                media_url = data['entities']['media'][0]['media_url']
-                url_in_tweet = data['entities']['media'][0]['url']
-                text = text.replace(url_in_tweet, '')
+            # skip if tweet is from bot itself
+            if data["id_str"] == settings.BOT_ID:
+                return
+
+            # skip tweet if it's just a RT
+            if "retweeted_status" in data:
+                return
+
+            payload["text"] = data["text"]
+            payload["tweet_id"] = data["id_str"]
+            payload["user"] = User.get_or_create(user_id=data["user"]["id_str"])[0]
+
+            if "media" in data["entities"]:
+                media_url = data["entities"]["media"][0]["media_url"]
+                url_in_tweet = data["entities"]["media"][0]["url"]
+                payload["text"] = payload["text"].replace(url_in_tweet, "")
                 r = requests.get(media_url)
-                media = r.content
+                payload["media"] = r.content
 
             # unescape HTML entities
-            text = HTMLParser.HTMLParser().unescape(text)
+            payload["text"] = html.unescape(payload["text"])
 
             # storing tweet in database
-            tweet_db = Tweet(tweet_id=tweet_id, user_id=user_id, text=text, media=media)
-            database.session.add(tweet_db)
-            database.session.commit()
-            print "Added new tweet to db"
+            logging.info("Adding new tweet to DB: {id} from {user}".format(id=payload["tweet_id"],
+                                                                           user=payload["user"].user_id))
+            tweet_db = Tweet(**payload)
+            tweet_db.save()
 
-        if 'delete' in data:
-            print "Got a delete message, checking if I have the corresponding tweet...",
-            instance = database.session.query(Tweet).filter_by(tweet_id=data['delete']['status']['id_str']).first()
+        if "delete" in data:
+            logging.info("Received delete message, checking if corresponding tweet is stored: {id}".format(
+                id=data["delete"]["status"]["id_str"]))
+
+            instance = None
+            try:
+                instance = Tweet.get(Tweet.tweet_id == data["delete"]["status"]["id_str"])
+                logging.info("Tweet found! :)")
+            except DoesNotExist:
+                logging.info("Tweet not found! :(")
+
+            event_db = Event(event="delete",
+                             user=User.get_or_create(user_id=data["delete"]["status"]["user_id_str"])[0],
+                             tweet=instance)
+            event_db.save()
+
             if instance:
-                instance.gone = True
+                # mark this tweet as deleted
+                instance.is_deleted = True
+                instance.save()
 
-                # replace @ with & to avoid mentioning someone
-                text = instance.text.replace('@', '&')
+                # add tweet to job queue
+                jobs_db = Job(tweet=instance)
+                jobs_db.save()
 
-                # gonna tweet, bro
-                try:
-                    if instance.media:
-                        media = StringIO(instance.media)
-                        bot.update_status_with_media(status=text, media=media)
-                    else:
-                        bot.update_status(status=text)
-                    print "Success!"
+        if "status_withheld" in data:
+            logging.info("Received withheld content notice, checking if corresponding tweet is stored: {id}".format(
+                id=str(data["status_withheld"]["id"])))
 
-                except TwythonError, e:
-                    print "TwythonError: %s" % repr(e)
+            instance = None
+            try:
+                instance = Tweet.get(Tweet.tweet_id == str(data["status_withheld"]["id"]))
+                logging.info("Tweet found! :)")
+            except DoesNotExist:
+                logging.info("Tweet not found! :(")
 
-                finally:
-                    database.session.commit()
-            else:
-                print "Nope!"
+            event_db = Event(event="withheld",
+                             user=User.get_or_create(user_id=str(data["status_withheld"]["user_id"]))[0],
+                             tweet=instance)
+            event_db.save()
+
+            if instance:
+                # mark this tweet as deleted
+                instance.is_withheld = True
+                instance.save()
+
+                # add tweet to job queue
+                jobs_db = Job(tweet=instance)
+                jobs_db.save()
 
     def on_error(self, status_code, data):
-        print status_code
+        logging.error("Error while processing stream: {}".format(status_code))
 
 
-database.init_db()
-
-stream = init_detwtr_stream()
-bot = init_detwtr_bot()
-
-stream.user()
+if __name__ == '__main__':
+    logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
+    db.connect()
+    db.create_tables([Tweet, User, Event, Job, ], safe=True)
+    stream = init_detwtr_stream()
+    stream.user()
+    db.close()
