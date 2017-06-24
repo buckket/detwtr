@@ -4,7 +4,7 @@ import html
 import logging
 
 import requests
-from peewee import DoesNotExist
+from peewee import DoesNotExist, IntegrityError
 from twython import TwythonStreamer
 
 import settings
@@ -24,7 +24,7 @@ class detwtrStreamer(TwythonStreamer):
             payload = {}
 
             # skip if tweet is from bot itself
-            if data["id_str"] == settings.BOT_ID:
+            if data["user"]["id_str"] == settings.BOT_ID:
                 return
 
             # skip tweet if it's just a RT
@@ -49,7 +49,10 @@ class detwtrStreamer(TwythonStreamer):
             logging.info("Adding new tweet to DB: {id} from {user}".format(id=payload["tweet_id"],
                                                                            user=payload["user"].user_id))
             tweet_db = Tweet(**payload)
-            tweet_db.save()
+            try:
+                tweet_db.save()
+            except IntegrityError:
+                logging.error("Tweet already present in DB")
 
         if "delete" in data:
             logging.info("Received delete message, checking if corresponding tweet is stored: {id}".format(
@@ -74,7 +77,10 @@ class detwtrStreamer(TwythonStreamer):
 
                 # add tweet to job queue
                 jobs_db = Job(tweet=instance)
-                jobs_db.save()
+                try:
+                    jobs_db.save()
+                except IntegrityError:
+                    logging.error("Tweet is already marked for restoration")
 
         if "status_withheld" in data:
             logging.info("Received withheld content notice, checking if corresponding tweet is stored: {id}".format(
@@ -99,7 +105,10 @@ class detwtrStreamer(TwythonStreamer):
 
                 # add tweet to job queue
                 jobs_db = Job(tweet=instance)
-                jobs_db.save()
+                try:
+                    jobs_db.save()
+                except IntegrityError:
+                    logging.error("Tweet is already marked for restoration")
 
     def on_error(self, status_code, data):
         logging.error("Error while processing stream: {}".format(status_code))

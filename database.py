@@ -40,7 +40,7 @@ class Event(Model):
 
 
 class Job(Model):
-    tweet = ForeignKeyField(Tweet, related_name="jobs")
+    tweet = ForeignKeyField(Tweet, unique=True, related_name="jobs")
     created_at = DateTimeField(default=datetime.datetime.now)
 
     class Meta:

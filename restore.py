@@ -35,7 +35,7 @@ def main():
         for tweet in Tweet.select().where((Tweet.user == job.tweet.user) & (
                     Tweet.created_at > job.tweet.created_at) & ~(Tweet.is_deleted) & ~(Tweet.is_withheld)):
             levdist = editdistance.eval(tweet.text, job.tweet.text)
-            if levdist <= max(2, int(math.ceil(5 / 140 * len(job.tweet.text)))) and job.tweet.media == tweet.media:
+            if levdist <= max(3, int(math.ceil(14 / 140 * len(job.tweet.text)))) and job.tweet.media == tweet.media:
                 is_duplicate = True
                 logging.info("Duplicate found:\n{tweet_1}\n---\n{tweet_2}".format(tweet_1=job.tweet.text,
                                                                                   tweet_2=tweet.text))
@@ -58,6 +58,8 @@ def main():
                 job.delete_instance()
             except TwythonError as e:
                 logging.error("TwythonError: {error}".format(error=repr(e)))
+                if "Status is a duplicate" in e.msg:
+                    job.delete_instance()
     db.close()
 
 
